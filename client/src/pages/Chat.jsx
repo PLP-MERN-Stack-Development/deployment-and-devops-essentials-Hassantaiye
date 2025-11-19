@@ -1,25 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { socket } from "../socket/socket";
 import axios from "axios";
-import { FiSend, FiImage, FiLogOut, FiSearch, FiAlertCircle } from "react-icons/fi";
+import { FiSend, FiImage, FiLogOut, FiSearch, FiAlertCircle, FiRefreshCw } from "react-icons/fi";
 import { BsDot } from "react-icons/bs";
-import { IoCheckmark, IoCheckmarkDone, IoTime } from "react-icons/io5";
+import { IoCheckmark, IoCheckmarkDone, IoTime, IoWarning } from "react-icons/io5";
 
 // Lazy load heavy components
 const FileUpload = lazy(() => import("../components/FileUpload"));
 
-// Environment configuration
+// Environment configuration with production defaults
 const config = {
-  API_BASE_URL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
+  API_BASE_URL: import.meta.env.VITE_API_URL || 'https://your-backend-service.onrender.com',
+  SOCKET_URL: import.meta.env.VITE_SOCKET_URL || 'https://your-backend-service.onrender.com',
   APP_NAME: import.meta.env.VITE_APP_NAME || 'ChatApp',
   DEBUG: import.meta.env.VITE_DEBUG === 'true',
+  VERSION: import.meta.env.VITE_VERSION || '1.0.0',
 };
 
-// Error Boundary Component
+// Error Boundary Component with production error reporting
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, errorInfo: null };
   }
 
   static getDerivedStateFromError(error) {
@@ -27,24 +29,72 @@ class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
+    this.setState({ errorInfo });
+    
     if (config.DEBUG) {
       console.error('Error caught by boundary:', error, errorInfo);
     }
-    // Here you would send to your error reporting service
+    
+    // In production, you would send this to your error reporting service
+    if (config.API_BASE_URL.includes('render.com') || !config.DEBUG) {
+      // Example: Send to error reporting service
+      this.reportError(error, errorInfo);
+    }
   }
+
+  reportError = async (error, errorInfo) => {
+    try {
+      // You can send errors to your backend for logging
+      await fetch(`${config.API_BASE_URL}/api/logs/error`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          error: error.toString(),
+          stack: error.stack,
+          componentStack: errorInfo.componentStack,
+          url: window.location.href,
+          userAgent: navigator.userAgent,
+          timestamp: new Date().toISOString(),
+        }),
+      });
+    } catch (err) {
+      // Silent fail for error reporting errors
+    }
+  };
 
   render() {
     if (this.state.hasError) {
       return (
         <div className="flex items-center justify-center h-screen bg-gray-900">
-          <div className="text-center p-8 bg-gray-800 rounded-lg">
-            <h2 className="text-xl text-white mb-4">Something went wrong</h2>
-            <button 
-              onClick={() => this.setState({ hasError: false, error: null })}
-              className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
-            >
-              Try Again
-            </button>
+          <div className="text-center p-8 bg-gray-800 rounded-lg max-w-md">
+            <IoWarning className="text-yellow-500 text-4xl mx-auto mb-4" />
+            <h2 className="text-xl text-white mb-2">Something went wrong</h2>
+            <p className="text-gray-400 mb-4">
+              {config.DEBUG ? this.state.error?.toString() : 'Please try refreshing the page.'}
+            </p>
+            <div className="flex gap-2 justify-center">
+              <button 
+                onClick={() => window.location.reload()}
+                className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded flex items-center gap-2"
+              >
+                <FiRefreshCw size={16} />
+                Refresh Page
+              </button>
+              <button 
+                onClick={() => this.setState({ hasError: false, error: null, errorInfo: null })}
+                className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded"
+              >
+                Try Again
+              </button>
+            </div>
+            {config.DEBUG && this.state.errorInfo && (
+              <details className="mt-4 text-left">
+                <summary className="cursor-pointer text-gray-400">Error Details</summary>
+                <pre className="text-xs text-gray-500 mt-2 whitespace-pre-wrap">
+                  {this.state.errorInfo.componentStack}
+                </pre>
+              </details>
+            )}
           </div>
         </div>
       );
@@ -54,22 +104,75 @@ class ErrorBoundary extends React.Component {
 }
 
 // Loading component for Suspense
-const LoadingSpinner = () => (
-  <div className="flex justify-center items-center p-4">
-    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-  </div>
-);
+const LoadingSpinner = ({ size = 'md' }) => {
+  const sizes = {
+    sm: 'h-4 w-4',
+    md: 'h-8 w-8',
+    lg: 'h-12 w-12'
+  };
+  
+  return (
+    <div className="flex justify-center items-center p-4">
+      <div className={`animate-spin rounded-full border-b-2 border-blue-600 ${sizes[size]}`}></div>
+    </div>
+  );
+};
+
+// Enhanced error handling utility
+const handleApiError = (error, context) => {
+  if (config.DEBUG) {
+    console.error(`API Error in ${context}:`, error);
+  }
+  
+  if (error.code === 'NETWORK_ERROR' || error.message === 'Network Error') {
+    return 'Unable to connect to server. Please check your internet connection.';
+  }
+  
+  if (error.response) {
+    const status = error.response.status;
+    switch (status) {
+      case 401:
+        return 'Please log in again.';
+      case 403:
+        return 'You do not have permission to perform this action.';
+      case 404:
+        return 'Requested resource not found.';
+      case 429:
+        return 'Too many requests. Please wait a moment.';
+      case 500:
+        return 'Server error. Please try again later.';
+      case 502:
+      case 503:
+      case 504:
+        return 'Service temporarily unavailable. Please try again later.';
+      default:
+        return error.response.data?.message || `Error: ${status}`;
+    }
+  } else if (error.request) {
+    return 'Network error: Unable to reach the server.';
+  } else {
+    return 'An unexpected error occurred.';
+  }
+};
 
 // Memoized Message Component for better performance
 const MessageItem = React.memo(({ msg, currentUser }) => {
   const formatMessageTime = (timestamp) => {
-    const now = new Date();
-    const messageDate = new Date(timestamp);
-    
-    if (now.toDateString() === messageDate.toDateString()) {
-      return messageDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    } else {
-      return messageDate.toLocaleDateString() + ' ' + messageDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    try {
+      const now = new Date();
+      const messageDate = new Date(timestamp);
+      
+      if (isNaN(messageDate.getTime())) {
+        return 'Invalid date';
+      }
+      
+      if (now.toDateString() === messageDate.toDateString()) {
+        return messageDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      } else {
+        return messageDate.toLocaleDateString() + ' ' + messageDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+    } catch (error) {
+      return 'Invalid date';
     }
   };
 
@@ -82,18 +185,29 @@ const MessageItem = React.memo(({ msg, currentUser }) => {
     }
   };
 
+  const handleImageError = (e) => {
+    e.target.style.display = 'none';
+    e.target.nextSibling.style.display = 'block';
+  };
+
   return (
     <div className={`flex flex-col ${msg.sender === currentUser ? "items-end" : "items-start"}`}>
       <div className={`max-w-xl p-3 rounded-2xl ${msg.sender === currentUser ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-200"}`}>
         {msg.fileUrl ? (
-          <img 
-            src={msg.fileUrl} 
-            alt="Uploaded file" 
-            className="rounded max-h-80 object-cover"
-            loading="lazy"
-          />
+          <div className="relative">
+            <img 
+              src={msg.fileUrl} 
+              alt="Uploaded file" 
+              className="rounded max-h-80 object-cover"
+              loading="lazy"
+              onError={handleImageError}
+            />
+            <div className="hidden text-sm text-gray-500 p-2 bg-gray-800 rounded">
+              File: {msg.fileUrl.split('/').pop()}
+            </div>
+          </div>
         ) : (
-          <div className="whitespace-pre-wrap">{msg.text}</div>
+          <div className="whitespace-pre-wrap break-words">{msg.text}</div>
         )}
       </div>
       <div className="flex items-center gap-2 text-xs text-gray-400 mt-1">
@@ -126,19 +240,27 @@ function Chat({ user, onLogout }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [connectionStatus, setConnectionStatus] = useState('connected');
 
   const messagesEndRef = useRef(null);
   const audioRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const retryTimeoutRef = useRef(null);
 
-  // Lazy load audio
+  // Lazy load audio with error handling
   useEffect(() => {
-    import("../assets/notify.mp3").then(module => {
-      audioRef.current = new Audio(module.default);
-    });
+    import("../assets/notify.mp3")
+      .then(module => {
+        audioRef.current = new Audio(module.default);
+      })
+      .catch(err => {
+        if (config.DEBUG) {
+          console.warn('Failed to load notification sound:', err);
+        }
+      });
   }, []);
 
-  // --- Utility Functions ---
+  // Enhanced utility functions
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
@@ -156,33 +278,71 @@ function Chat({ user, onLogout }) {
     setMessages((prev) => [...prev, msg]);
   }, []);
 
-  // --- File Validation ---
+  // Enhanced file validation
   const validateFile = useCallback((file) => {
     const maxSize = 5 * 1024 * 1024; // 5MB
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf'];
+    const allowedTypes = [
+      'image/jpeg', 
+      'image/png', 
+      'image/gif', 
+      'application/pdf',
+      'image/webp'
+    ];
     
     if (file.size > maxSize) {
-      throw new Error('File size too large (max 5MB)');
+      throw new Error(`File size too large. Maximum size is ${maxSize / 1024 / 1024}MB`);
     }
     
     if (!allowedTypes.includes(file.type)) {
-      throw new Error('Invalid file type. Allowed: JPEG, PNG, GIF, PDF');
+      throw new Error('Invalid file type. Allowed: JPEG, PNG, GIF, PDF, WebP');
     }
     
     return true;
   }, []);
 
-  // --- Load Older Messages ---
+  // Enhanced API call with retry logic
+  const apiCallWithRetry = async (apiCall, maxRetries = 3) => {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await apiCall();
+      } catch (error) {
+        lastError = error;
+        
+        if (attempt === maxRetries) break;
+        
+        if (config.DEBUG) {
+          console.warn(`API call failed, retrying... (${attempt}/${maxRetries})`);
+        }
+        
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => 
+          setTimeout(resolve, 1000 * Math.pow(2, attempt - 1))
+        );
+      }
+    }
+    
+    throw lastError;
+  };
+
+  // Enhanced load older messages with retry
   const loadOlderMessages = async () => {
     if (loadingOlder || !hasMoreOlder) return;
+    
     setLoadingOlder(true);
     setError(null);
 
     try {
       const before = messages.length ? new Date(messages[0].timestamp).toISOString() : new Date().toISOString();
-      const res = await axios.get(
-        `${config.API_BASE_URL}/api/messages/${encodeURIComponent(currentRoom)}?limit=20&before=${before}`
+      
+      const res = await apiCallWithRetry(() => 
+        axios.get(
+          `${config.API_BASE_URL}/api/messages/${encodeURIComponent(currentRoom)}?limit=20&before=${before}`,
+          { timeout: 10000 }
+        )
       );
+      
       const older = res.data.messages || [];
       
       if (older.length === 0) {
@@ -191,18 +351,37 @@ function Chat({ user, onLogout }) {
         setMessages((prev) => [...older, ...prev]);
       }
     } catch (err) {
-      if (config.DEBUG) {
-        console.error("Failed to load older messages", err);
-      }
-      setError("Failed to load older messages");
+      const errorMessage = handleApiError(err, 'loadOlderMessages');
+      setError(errorMessage);
     } finally {
       setLoadingOlder(false);
     }
   };
 
-  // --- Socket Handlers ---
+  // Enhanced socket connection management
   useEffect(() => {
     if (!user) return;
+
+    const onConnect = () => {
+      setConnectionStatus('connected');
+      if (config.DEBUG) {
+        console.log('Socket connected');
+      }
+    };
+
+    const onDisconnect = (reason) => {
+      setConnectionStatus('disconnected');
+      if (config.DEBUG) {
+        console.log('Socket disconnected:', reason);
+      }
+    };
+
+    const onConnectError = (error) => {
+      setConnectionStatus('error');
+      if (config.DEBUG) {
+        console.error('Socket connection error:', error);
+      }
+    };
 
     const onReceiveMessage = (msg) => {
       if (msg.room !== currentRoom) {
@@ -233,15 +412,24 @@ function Chat({ user, onLogout }) {
 
     const onUserList = (list) => setUsers(list);
 
+    // Socket event listeners
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onConnectError);
     socket.on("receive_message", onReceiveMessage);
     socket.on("user_typing", onUserTyping);
     socket.on("user_stop_typing", onUserStopTyping);
     socket.on("userList", onUserList);
 
+    // Emit connection events
     socket.emit("userConnected", user.username);
     socket.emit("join_room", { room: currentRoom, username: user.username });
 
     return () => {
+      // Cleanup event listeners
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("connect_error", onConnectError);
       socket.off("receive_message", onReceiveMessage);
       socket.off("user_typing", onUserTyping);
       socket.off("user_stop_typing", onUserStopTyping);
@@ -249,7 +437,7 @@ function Chat({ user, onLogout }) {
     };
   }, [user, currentRoom, playSound, scrollToBottom]);
 
-  // --- Send Message ---
+  // Enhanced send message with better error handling
   const sendMessage = async (e) => {
     e.preventDefault();
     if ((!message.trim() && !file) || loading) return;
@@ -263,9 +451,20 @@ function Chat({ user, onLogout }) {
         validateFile(file);
         const formData = new FormData();
         formData.append("file", file);
-        const res = await axios.post(`${config.API_BASE_URL}/api/upload`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
+        
+        const res = await apiCallWithRetry(() =>
+          axios.post(`${config.API_BASE_URL}/api/upload`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            timeout: 30000, // 30 seconds for file uploads
+            onUploadProgress: (progressEvent) => {
+              // You could add a progress bar here
+              if (config.DEBUG) {
+                const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                console.log(`Upload Progress: ${percentCompleted}%`);
+              }
+            }
+          })
+        );
         fileUrl = res.data.url;
         setFile(null);
       }
@@ -291,46 +490,63 @@ function Chat({ user, onLogout }) {
       }
       socket.emit("user_stop_typing", { room: currentRoom, username: user.username });
 
-      socket.emit("send_message", msgData, (ack) => {
-        if (ack?.success) {
-          setMessages((prev) => prev.map((m) => 
-            m.id === localId ? { ...m, id: ack.serverId || m.id, status: "delivered" } : m
-          ));
-        } else {
-          setMessages((prev) => prev.map((m) => 
-            m.id === localId ? { ...m, status: "failed" } : m
-          ));
-        }
+      // Send message with timeout
+      const sendPromise = new Promise((resolve, reject) => {
+        socket.emit("send_message", msgData, (ack) => {
+          if (ack?.success) {
+            resolve(ack);
+          } else {
+            reject(new Error(ack?.error || 'Failed to send message'));
+          }
+        });
       });
+
+      // Add timeout for send confirmation
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Send timeout')), 10000)
+      );
+
+      const ack = await Promise.race([sendPromise, timeoutPromise]);
+      
+      setMessages((prev) => prev.map((m) => 
+        m.id === localId ? { ...m, id: ack.serverId || m.id, status: "delivered" } : m
+      ));
+      
     } catch (err) {
-      if (config.DEBUG) {
-        console.error("Send message error:", err);
-      }
-      setError(err.message || "Failed to send message");
+      const errorMessage = handleApiError(err, 'sendMessage');
+      setError(errorMessage);
+      
+      // Mark message as failed
+      setMessages((prev) => prev.map((m) => 
+        m.id === localId ? { ...m, status: "failed" } : m
+      ));
     } finally {
       setLoading(false);
     }
   };
 
-  // --- Load Messages on Mount & Room Switch ---
+  // Enhanced message loading with retry
   useEffect(() => {
     const fetchMessages = async () => {
       setLoading(true);
       setError(null);
+      
       try {
-        const res = await axios.get(
-          `${config.API_BASE_URL}/api/messages/${encodeURIComponent(currentRoom)}?limit=50`
+        const res = await apiCallWithRetry(() =>
+          axios.get(
+            `${config.API_BASE_URL}/api/messages/${encodeURIComponent(currentRoom)}?limit=50`,
+            { timeout: 15000 }
+          )
         );
+        
         setMessages(res.data.messages || []);
         scrollToBottom();
         
         // Clear unread count when switching to room
         setUnreadCount(prev => ({ ...prev, [currentRoom]: 0 }));
       } catch (err) {
-        if (config.DEBUG) {
-          console.warn("Failed to load messages", err);
-        }
-        setError("Failed to load messages");
+        const errorMessage = handleApiError(err, 'fetchMessages');
+        setError(errorMessage);
       } finally {
         setLoading(false);
       }
@@ -339,7 +555,7 @@ function Chat({ user, onLogout }) {
     fetchMessages();
   }, [currentRoom, scrollToBottom]);
 
-  // --- Typing Indicator ---
+  // Enhanced typing indicator
   useEffect(() => {
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
@@ -373,7 +589,7 @@ function Chat({ user, onLogout }) {
 
   const onlineUsersCount = useMemo(() => users.length, [users]);
 
-  // --- Room Switch Handler ---
+  // Enhanced room switch handler
   const handleRoomSwitch = useCallback((room) => {
     if (room === currentRoom) return;
     setCurrentRoom(room);
@@ -383,6 +599,16 @@ function Chat({ user, onLogout }) {
     socket.emit("join_room", { room, username: user.username });
   }, [currentRoom, user.username]);
 
+  // Connection status indicator
+  const getConnectionStatusColor = () => {
+    switch(connectionStatus) {
+      case 'connected': return 'bg-green-500';
+      case 'disconnected': return 'bg-yellow-500';
+      case 'error': return 'bg-red-500';
+      default: return 'bg-gray-500';
+    }
+  };
+
   return (
     <ErrorBoundary>
       <div className="flex flex-col md:flex-row w-full h-screen bg-gray-900 text-white">
@@ -390,6 +616,12 @@ function Chat({ user, onLogout }) {
         <aside className="w-full md:w-1/4 bg-gray-800 p-4 border-r border-gray-700 flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold">💬 {config.APP_NAME}</h2>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${getConnectionStatusColor()}`}></div>
+              {config.DEBUG && (
+                <span className="text-xs text-gray-400">v{config.VERSION}</span>
+              )}
+            </div>
           </div>
 
           {/* Search */}
@@ -457,6 +689,15 @@ function Chat({ user, onLogout }) {
 
         {/* Chat Area */}
         <main className="flex-1 flex flex-col">
+          {/* Connection Status Banner */}
+          {connectionStatus !== 'connected' && (
+            <div className="bg-yellow-600 text-white p-2 text-center text-sm">
+              {connectionStatus === 'disconnected' 
+                ? 'Connecting...' 
+                : 'Connection issues. Some features may be unavailable.'}
+            </div>
+          )}
+
           {/* Error Display */}
           {error && (
             <div className="bg-red-600 text-white p-3 flex items-center justify-between">
@@ -464,7 +705,11 @@ function Chat({ user, onLogout }) {
                 <FiAlertCircle />
                 <span>{error}</span>
               </div>
-              <button onClick={() => setError(null)} className="text-white hover:text-gray-200">
+              <button 
+                onClick={() => setError(null)} 
+                className="text-white hover:text-gray-200 p-1"
+                aria-label="Dismiss error"
+              >
                 ×
               </button>
             </div>
@@ -475,6 +720,7 @@ function Chat({ user, onLogout }) {
             <h1 className="text-xl font-bold">#{currentRoom}</h1>
             <p className="text-sm text-gray-400">
               {onlineUsersCount} user{onlineUsersCount !== 1 ? 's' : ''} online
+              {connectionStatus !== 'connected' && ' • Reconnecting...'}
             </p>
           </div>
 
@@ -486,17 +732,31 @@ function Chat({ user, onLogout }) {
                 <button 
                   onClick={loadOlderMessages} 
                   disabled={loadingOlder}
-                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                 >
-                  {loadingOlder ? "Loading..." : "Load older messages"}
+                  {loadingOlder ? (
+                    <>
+                      <LoadingSpinner size="sm" />
+                      Loading...
+                    </>
+                  ) : (
+                    'Load older messages'
+                  )}
                 </button>
               </div>
             )}
 
             {/* Loading State */}
             {loading && messages.length === 0 && (
-              <div className="flex justify-center">
-                <div className="text-gray-400">Loading messages...</div>
+              <div className="flex justify-center items-center h-32">
+                <LoadingSpinner size="lg" />
+              </div>
+            )}
+
+            {/* Empty State */}
+            {!loading && filteredMessages.length === 0 && (
+              <div className="flex justify-center items-center h-32 text-gray-500">
+                No messages yet. Start the conversation!
               </div>
             )}
 
@@ -528,15 +788,23 @@ function Chat({ user, onLogout }) {
                 setMessage(e.target.value);
               }}
               placeholder="Type a message..."
-              className="flex-1 px-3 py-2 rounded-lg bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={loading}
+              className="flex-1 px-3 py-2 rounded-lg bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              disabled={loading || connectionStatus !== 'connected'}
+              maxLength={1000}
             />
             <button 
               type="submit" 
-              disabled={loading || (!message.trim() && !file)}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+              disabled={loading || connectionStatus !== 'connected' || (!message.trim() && !file)}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors flex items-center gap-2 min-w-20 justify-center"
             >
-              {loading ? "Sending..." : <><FiSend /> Send</>}
+              {loading ? (
+                <LoadingSpinner size="sm" />
+              ) : (
+                <>
+                  <FiSend /> 
+                  <span className="hidden sm:inline">Send</span>
+                </>
+              )}
             </button>
           </form>
         </main>
