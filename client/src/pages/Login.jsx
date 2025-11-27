@@ -7,21 +7,32 @@ export default function Login({ onLogin, onSwitch }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Use environment variable for backend URL
+  const API_URL = import.meta.env.VITE_API_URL;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      const res = await axios.post("http://localhost:5000/api/auth/login", { email, password });
+      const res = await axios.post(`${API_URL}/api/auth/login`, { email, password });
       
+      // Save token and user in localStorage
       localStorage.setItem("token", res.data.token);
-      localStorage.setItem("user", JSON.stringify({
+      localStorage.setItem(
+        "user",
+        JSON.stringify({
+          _id: res.data._id,
+          username: res.data.username,
+          email: res.data.email
+        })
+      );
+
+      onLogin({
         _id: res.data._id,
         username: res.data.username,
         email: res.data.email
-      }));
-
-      onLogin({ _id: res.data._id, username: res.data.username, email: res.data.email });
+      });
     } catch (err) {
       setError(err.response?.data?.message || "Invalid credentials");
     } finally {
@@ -33,7 +44,11 @@ export default function Login({ onLogin, onSwitch }) {
     <div className="w-full max-w-sm bg-gray-800/80 backdrop-blur-sm rounded-2xl shadow-lg p-8 border border-gray-700">
       <h2 className="text-2xl font-semibold text-center mb-6 text-white">👋 Welcome Back</h2>
 
-      {error && <p className="bg-red-500/10 text-red-400 border border-red-400/30 p-2 rounded-md mb-4 text-sm text-center">{error}</p>}
+      {error && (
+        <p className="bg-red-500/10 text-red-400 border border-red-400/30 p-2 rounded-md mb-4 text-sm text-center">
+          {error}
+        </p>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <div>

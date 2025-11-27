@@ -8,13 +8,16 @@ export default function Register({ onRegister, onSwitch }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Use environment variable for backend URL
+  const API_URL = import.meta.env.VITE_API_URL;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      const res = await axios.post("http://localhost:5000/api/auth/register", {
+      const res = await axios.post(`${API_URL}/api/auth/register`, {
         username,
         email,
         password,
@@ -24,10 +27,18 @@ export default function Register({ onRegister, onSwitch }) {
       localStorage.setItem("token", res.data.token);
       localStorage.setItem(
         "user",
-        JSON.stringify({ _id: res.data._id, username: res.data.username, email: res.data.email })
+        JSON.stringify({
+          _id: res.data._id,
+          username: res.data.username,
+          email: res.data.email,
+        })
       );
 
-      onRegister({ _id: res.data._id, username: res.data.username, email: res.data.email });
+      onRegister({
+        _id: res.data._id,
+        username: res.data.username,
+        email: res.data.email,
+      });
     } catch (err) {
       setError(err.response?.data?.message || "Registration failed");
     } finally {
