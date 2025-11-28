@@ -2,6 +2,13 @@
 
 This assignment focuses on deploying a full MERN stack application to production, implementing CI/CD pipelines, and setting up monitoring for your application.
 
+## 🌐 Live Deployment
+
+| Platform | Status | Link |
+|----------|--------|------|
+| **Vercel** | ✅ Live | [Visit Site](https://wonderful-toffee-6b830e.netlify.app/) |
+| **Render** | ✅ Live | [Visit Site](https://deployment-and-devops-essentials-55mc.onrender.com/) |
+
 ## Assignment Overview
 
 You will:
